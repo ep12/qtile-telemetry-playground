@@ -160,9 +160,6 @@ def handle_file(path: str, settings: dict = DEFAULT_DATA_COLLECTION_SETTINGS):
 
 
 def find_module_spec(module_name: str, path=None):
-    # Stolen from
-    #  https://docs.python.org/3.7/library/
-    #  importlib.html?highlight=importlib#approximating-importlib-import-module
     sys.path.append(path)
     s = importlib.util.find_spec(module_name)
     sys.path.pop()
