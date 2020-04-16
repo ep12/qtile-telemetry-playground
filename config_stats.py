@@ -28,6 +28,7 @@ DEFAULT_DATA_COLLECTION_SETTINGS = {
         'Imports': True,  # maybe okay
         'HelperModules': True,  # maybe okay
         'FunctionDef': True,  # probably okay
+        'Call': False,  # most definitely not okay
     }
 }
 
@@ -62,6 +63,7 @@ class StatsVisitor(ast.NodeVisitor):
             'Attribute': {},
             'ClassDef': {},
             'FunctionDef': {},
+            'Call': {}
         }
         self.settings = settings
         
@@ -101,6 +103,13 @@ class StatsVisitor(ast.NodeVisitor):
         self.sd['FunctionDef'][node.name] = astor.to_source(node).count('\n')
         self.generic_visit(node)
 
+    def visit_Call(self, node):
+        func_str = attribute_node_to_str(node.func)
+        if func_str not in self.sd['Call']:
+            self.sd['Call'][func_str] = []
+        self.sd['Call'][func_str].append((node, attribute_node_to_str(node)))
+        self.generic_visit(node)
+
     @cproperty
     def imported_modules(self):
         return (set(self.sd['Import'].keys())
@@ -125,6 +134,11 @@ class StatsVisitor(ast.NodeVisitor):
         return attr
 
     @cproperty
+    def libqtile_calls(self):
+        full = {self.lookup_attribute(k): v for k, v in self.sd['Call'].items()}
+        return {k: v for k, v in full.items() if k.startswith('libqtile')}
+
+    @cproperty
     def libqtile_attributes(self):
         d = {}
         for a, c in self.sd['Attribute'].items():
@@ -136,21 +150,25 @@ class StatsVisitor(ast.NodeVisitor):
 
     @cproperty
     def stats(self):
+        """Return the final, filtered stats."""
         d = {k: v for k, v in self.sd.items() if k in ALLOWED_RAW_ITEMS}
         d['Attribute'] = self.libqtile_attributes
         d['Imports'] = self.imported_modules
         d['HelperModules'] = find_user_config_helper_modules(self.imported_modules)
+        d['Call'] = self.libqtile_calls
         return {k: v for k, v in d.items()
                 if self.settings.get('file_stats_items', {}).get(k, False)}
 
 
 def find_user_config_helper_modules(module_names):
+    """Find all the modules that cannot be imported without CONFIG_DIR in sys.path."""
     not_found = set(filter(lambda m: importlib.util.find_spec(m) is None, module_names))
     # TODO: filter: only return those in the config dir
     return not_found
 
 
 def handle_file(path: str, settings: dict = DEFAULT_DATA_COLLECTION_SETTINGS):
+    """Parse a single user config file."""
     with open(path) as f:
         data = f.read()
     file_ast = ast.parse(data, path)
@@ -160,6 +178,7 @@ def handle_file(path: str, settings: dict = DEFAULT_DATA_COLLECTION_SETTINGS):
 
 
 def find_module_spec(module_name: str, path=None):
+    """Find the file that would be loaded when importing module_name."""
     sys.path.append(path)
     s = importlib.util.find_spec(module_name)
     sys.path.pop()
@@ -167,9 +186,10 @@ def find_module_spec(module_name: str, path=None):
 
 
 def parse_config_files(settings: dict = DEFAULT_DATA_COLLECTION_SETTINGS):
+    """Parse the user config files (recursively)."""
     root = handle_file(config_path('config.py'), settings)
     d = {'~/.config/qtile/config.py': root}
-    if settings.get('recurse', False) == True:
+    if settings.get('recurse', False) == True:  # pylint: disable=singleton-comparison
         # if not specified: be nice and default to False.
         unhandled = {x: config_path('config.py') for x in root.stats['HelperModules']}
         handled = set(config_path('config.py'))
@@ -189,8 +209,20 @@ def parse_config_files(settings: dict = DEFAULT_DATA_COLLECTION_SETTINGS):
     return {k: v.stats for k, v in d.items()}
 
 if __name__ == '__main__':
-    import os
-    data = parse_config_files()
+    # data = parse_config_files()
+    data = parse_config_files({
+        'recurse': True,
+        'file_stats_items': {
+            'FileSize': True,
+            'LineCount': True,
+            'Attribute': True,
+            'ClassDef': True,
+            'Imports': True,
+            'HelperModules': True,
+            'FunctionDef': True,
+            'Call': True,
+        }
+    })
     pprint(data)
 
     # when transmitting data:
